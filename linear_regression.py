@@ -1,140 +1,156 @@
 import numpy as np
-from data_loader import build_dataset
+from data_loader import DataLoader
 import pandas as pd
-from plotlib import plot_dataset, plot_3D, plot_predictions
 from math import sqrt
 import matplotlib.pyplot as plt
 
 
-def get_linear_regression_weights(dataset, regularization_weight=0):
-    """
-    :param dataset: contains attribute and f-values
-    :return: the weights vector for the underlying linear system of equations
-    """
+class LinearRegression():
 
-    if regularization_weight < 0:
-        raise ValueError('regularization_weight should be non-negative')
+    def __init__(self):
+        self.weights = None
+        self.lambda_values = []
+        self.E_RMS_values = []
+        self.best_lambda = 0
+        self.best_E_RMS = 0
 
-    # M is the no of attributes
-    M = dataset.shape[1] - 1
+    def learn_with_regularization(self, train_attrs, train_labels, _lambda=0):
 
-    A = np.zeros((M + 1, M + 1), dtype=float)
-    b = np.zeros(M + 1, dtype=float)
+        if _lambda < 0:
+            raise ValueError('regularization_weight should be non-negative')
 
-    for index, row in dataset.iterrows():
-        X = row.values[:-1]
-        f_X = row.values[-1]
-        X_dash = np.append(1, X)
-        b = np.add(b, np.multiply(f_X, X_dash))
-        A = np.add(A, np.multiply(X_dash, X_dash.reshape((M+1, 1))))
+        if len(train_attrs) != len(train_labels):
+            raise ValueError('count mismatch in attributes and labels')
 
-    lambda_identity = regularization_weight * np.identity(M + 1)
-    A = np.add(A, lambda_identity)
+        # M is the no of attributes
+        M = train_attrs.shape[1]
 
-    #print(A)
+        regularization_terms = _lambda * np.identity(M + 1)
+        A = np.zeros((M + 1, M + 1), dtype=float)
+        b = np.zeros(M + 1, dtype=float)
 
-    w = np.linalg.solve(A, b)
-    #print(w)
+        for index, row in train_attrs.iterrows():
+            X = row.values
+            f_X = train_labels.iat[index, 0]
+            X_dash = np.append(1, X)
+            b = np.add(b, np.multiply(f_X, X_dash))
+            A = np.add(A, np.multiply(X_dash, X_dash.reshape((M + 1, 1))))
 
-    return w
+        A = np.add(A, regularization_terms)
+        self.weights = np.linalg.solve(A, b)
 
+    def learn(self, train_attrs, train_labels, verbose=False):
+        learned_lambda = self.get_best_lambda(train_attrs, train_labels, verbose)[0]
+        self.learn_with_regularization(train_attrs, train_labels, _lambda=learned_lambda)
 
-def compute_y(X, weights):
-    return weights[0] + X[0] * weights[1] + X[1] * weights[2]
+    def predict_label(self, X):
+        return self.weights[0] + X[0] * self.weights[1] + X[1] * self.weights[2]
 
+    def predict(self, test_attrs, true_values=None):
 
-def predict(test_set, weights):
+        if not true_values.empty:
+            if len(test_attrs) != len(true_values):
+                raise ValueError('count mismatch in attributes and labels')
+            E_RMS = 0.0
+            N = len(test_attrs)
 
-    predictions = []
-    E_RMS = 0.0
-    N = len(test_set)
-    for index, row in test_set.iterrows():
-        X = row.values[:-1]
-        true_value = row.values[-1]
-        predicted_value = compute_y(X, weights)
-        predictions.append(predicted_value)
+        predicted_values = []
+        for index, row in test_attrs.iterrows():
+            X = row.values
+            predicted_value = self.predict_label(X)
+            predicted_values.append(predicted_value)
+            if not true_values.empty:
+                true_value = true_values.iat[index, 0]
+                E_RMS += (true_value - predicted_value) ** 2
 
-        E_RMS += (true_value - predicted_value)**2
+        predicted_values = pd.DataFrame(np.array(predicted_values))
 
-    E_RMS = E_RMS / N
-    E_RMS = sqrt(E_RMS)
+        if not true_values.empty:
+            E_RMS = E_RMS / N
+            E_RMS = sqrt(E_RMS)
+            return predicted_values, E_RMS
+        else:
+            return predicted_values, None
 
-    return predictions, E_RMS
+    def k_fold_cross_validation(self, attributes, labels, k=10,  _lambda=0):
 
+        N = len(attributes)
+        if N != len(labels):
+            raise ValueError('count mismatch in attributes and labels')
 
-def ten_fold_cross_validation(full_dataset, regularization_weight=0):
+        subset_size = N // k
+        start = 0
+        end = 0
+        avg_E_RMS = 0
+        for i in range(1, k + 1):
+            start = end
+            end = i * subset_size
+            attrs_splits = np.split(attributes, [start, end])
+            labels_splits = np.split(labels, [start, end])
+            test_attrs = attrs_splits[1]
+            test_labels = labels_splits[1]
+            test_attrs = test_attrs.reset_index(drop=True)
+            test_labels = test_labels.reset_index(drop=True)
+            train_attrs = pd.concat([attrs_splits[0], attrs_splits[2]], ignore_index=True)
+            train_labels = pd.concat([labels_splits[0], labels_splits[2]], ignore_index=True)
+            self.learn_with_regularization(train_attrs, train_labels, _lambda=_lambda)
+            E_RMS = self.predict(test_attrs, true_values=test_labels)[1]
+            avg_E_RMS += E_RMS
 
-    avg_E_RMS = 0
-    for i in range(10):
-        test_set = full_dataset.pop(0)
-        weights = get_linear_regression_weights(pd.concat(full_dataset), regularization_weight)
-        E_RMS = predict(test_set, weights)[1]
-        avg_E_RMS += E_RMS
-        full_dataset.append(test_set)
+        return avg_E_RMS / 10
 
-    return avg_E_RMS / 10
+    def get_best_lambda(self, attributes, values, verbose=False):
 
+        self.lambda_values = []
+        self.E_RMS_values = []
+        _lambda = 0.0
+        while _lambda < 4.1:
+            E_RMS = self.k_fold_cross_validation(attributes, values, k=10, _lambda=_lambda)
+            if verbose:
+                print('At lambda = %f E_ERMS = %f' % (_lambda, E_RMS))
+            self.lambda_values.append(round(_lambda, 1))
+            self.E_RMS_values.append(E_RMS)
+            _lambda += 0.1
 
-lambda_values = []
-E_RMS_values = []
+        self.best_E_RMS = min(self.E_RMS_values)
+        self.best_lambda = self.lambda_values[self.E_RMS_values.index(self.best_E_RMS)]
 
+        return self.best_lambda, self.best_E_RMS
 
-def get_best_lambda(full_dataset):
+    def summary(self):
+        print('\n')
+        print('='*10 + 'Model Summary' + '='*10)
+        print('Model Weights =', end=' ')
+        print(self.weights)
+        print('Learned Lambda = %.2f' % self.best_lambda)
+        print('Least Root Mean Square Error = %f' % self.best_E_RMS)
 
-    regularization_weight = 0.0
-    while regularization_weight < 4.1:
-        E_RMS = ten_fold_cross_validation(full_dataset, regularization_weight=regularization_weight)
-        print('At lambda = %f E_ERMS = %f' % (regularization_weight, E_RMS))
-        lambda_values.append(round(regularization_weight, 1))
-        E_RMS_values.append(E_RMS)
-        regularization_weight += 0.1
+    def plot_E_RMS(self):
 
-    best_E_RMS = min(E_RMS_values)
-    best_lambda = lambda_values[E_RMS_values.index(best_E_RMS)]
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.plot(self.lambda_values, self.E_RMS_values, '.-')
 
-    return best_lambda, best_E_RMS
-
-
-def plot_E_RMS():
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    line, = ax.plot(lambda_values, E_RMS_values, '.-')
-
-    ymin = min(E_RMS_values)
-    xpos = E_RMS_values.index(ymin)
-    xmin = lambda_values[xpos]
-    print(lambda_values)
-    print('Selected point', xmin, ymin, xpos)
-    ax.annotate('min at lambda=%f, E_RMS=%f ' % (xmin, ymin), xy=(xmin, ymin), xytext=(xmin - 1, ymin + 0.0005),
-                arrowprops=dict(facecolor='black', shrink=0.05, width=1),
-                )
-    ax.scatter([xmin],[ymin], c='r')
-    plt.xlabel('lambda')
-    plt.ylabel('E_RMS')
-    plt.title('E_RMS vs lambda')
-    plt.show()
-    plt.savefig("output.png")
+        ymin = self.best_E_RMS
+        xmin = self.best_lambda
+        ax.annotate(
+            'min at lambda=%f, E_RMS=%f ' % (xmin, ymin),
+            xy=(xmin, ymin), xytext=(xmin - 1, ymin + 0.0005),
+            arrowprops=dict(facecolor='black', shrink=0.05, width=1),
+            )
+        ax.scatter([xmin],[ymin], c='r')
+        plt.xlabel('lambda')
+        plt.ylabel('E_RMS')
+        plt.title('E_RMS vs lambda')
+        plt.show()
 
 
 if __name__ == '__main__':
-    dataset = build_dataset('./regression-dataset')
-    train_set = dataset[:-1]
-    cross_validation = dataset[-1]
 
-    weights = get_linear_regression_weights(pd.concat(train_set))
-    predictions, E_RMS = predict(cross_validation, weights)
-    print(predictions)
-    print(cross_validation['f(X)'])
-    print('Root Mean Square Error = %.2f' % E_RMS)
+    attributes, labels = DataLoader.load_full_dataset('./regression-dataset')
 
-    print(ten_fold_cross_validation(dataset, regularization_weight=0.5))
-    #plot_dataset(pd.concat(train_set))
-
-    #plot_predictions(pd.concat(train_set), cross_validation, predictions)
-    best_lambda, best_E_RMS = get_best_lambda(dataset)
-    print('Best lambda = %f with E_RMS = %.2f' % (best_lambda, best_E_RMS))
-
-    plot_E_RMS()
-
+    model = LinearRegression()
+    model.learn(attributes, labels, verbose=True)
+    model.summary()
+    model.plot_E_RMS()
 
