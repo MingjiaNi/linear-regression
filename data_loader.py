@@ -3,7 +3,7 @@ import numpy as np
 
 class DataLoader:
     """
-    Class that helps in loading dataset. Assumes attributes and labels are in seperate file
+    Class that helps in loading dataset. Assumes attributes and labels are in separate file
     """
 
     num_files = 10
@@ -12,10 +12,10 @@ class DataLoader:
     def load_dataset(cls, attributes_file, labels_file):
         """
         :param attributes_file: file path of attributes
-        :param labels_file: file path of correspnding labels
+        :param labels_file: file path of corresponding labels
         :return a 2-tuple of dataframes of attributes and labels
 
-        Loads data from single attributes, labels file pair
+        Loads data from single (attributes, labels) file pair
         """
 
         # Load attributes file and value file
@@ -71,6 +71,7 @@ class DataLoader:
         train_labels = pd.concat(labels_group, ignore_index=True)
 
         return train_attrs, train_labels, test_attrs, test_labels
+
 
 if __name__ == '__main__':
 

@@ -5,14 +5,16 @@ from math import sqrt
 import matplotlib.pyplot as plt
 
 
-class LinearRegression():
+class LinearRegression:
 
     def __init__(self):
         self.weights = None
+        self.best_lambda = 0  # The best lambda is learned by the system
+        self.best_E_RMS = 0
+
+        # For plotting
         self.lambda_values = []
         self.E_RMS_values = []
-        self.best_lambda = 0
-        self.best_E_RMS = 0
 
     def learn_with_regularization(self, train_attrs, train_labels, _lambda=0):
 
